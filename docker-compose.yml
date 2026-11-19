@@ -1,0 +1,34 @@
+# MoneyApp v2.0 — docker-compose para teste local.
+# Como usar:
+#   docker compose up --build
+#   Acesse: http://localhost:8080
+#
+# Persistência:
+#   O volume ./data é montado em /var/www/html/data, então o arquivo
+#   moneyapp.db sobrevive entre reinícios do container.
+#   Para resetar: pare o container e apague ./data/moneyapp.db.
+
+services:
+  moneyapp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: moneyapp:2.0
+    container_name: moneyapp
+    ports:
+      - "8080:80"
+    volumes:
+      # Persiste o banco SQLite no host (./data).
+      - ./data:/var/www/html/data
+    environment:
+      # Previne warning do Apache sobre ServerName.
+      APACHE_SERVER_NAME: localhost
+      # Timezone pt-BR para timestamps legíveis nos logs do container.
+      TZ: America/Sao_Paulo
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
