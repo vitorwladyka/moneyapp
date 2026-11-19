@@ -500,13 +500,9 @@ tr.tx-row-future td {
 /* ===== Cards do Dashboard ===== */
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     gap: 14px;
     margin-bottom: 20px;
-}
-
-@media (max-width: 900px) {
-    .stats-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (max-width: 600px) {
@@ -779,6 +775,25 @@ tr.cat-matrix-child-row td {
     margin-top: 1px;
 }
 
+.dash-account-balances {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.dash-account-balances .amount {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.dash-account-balances .amount-final {
+    font-size: 11px;
+    font-weight: 500;
+    opacity: 0.75;
+}
+
 .dash-account-more {
     padding: 10px 16px;
     font-size: 12px;
@@ -909,6 +924,22 @@ tbody tr:hover {
 }
 
 .balance-value.negative { color: var(--expense); }
+
+.account-balances {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.account-balance-row .balance-label {
+    margin-bottom: 2px;
+}
+
+.balance-value-secondary {
+    font-size: 16px;
+    font-weight: 600;
+    opacity: 0.92;
+}
 
 .account-foot {
     margin-top: 14px;

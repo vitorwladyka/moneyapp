@@ -40,7 +40,7 @@ $subtitle ??= '';
                 <div class="brand-logo">M</div>
                 <div>
                     <div class="brand-name">MoneyApp</div>
-                    <div class="brand-sub">v2.0 · pt-BR · BRL</div>
+                    <div class="brand-sub">v2.0</div>
                 </div>
             </div>
             <nav class="nav">

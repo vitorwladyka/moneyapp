@@ -44,15 +44,19 @@ final class AccountService
             ORDER BY a.display_order ASC, a.name COLLATE NOCASE ASC
         SQL;
         $rows = $this->pdo->query($sql)->fetchAll();
+        // Hoje em UTC (data de negócio), inclusive no saldo "até hoje".
+        $todayIso = Dates::toIso(Dates::nowUtc()->setTime(0, 0, 0));
         $out = [];
         foreach ($rows as $r) {
             $opening = Money::fromStorage($r['opening_balance']);
-            $txAmounts = $this->fetchActiveTxAmounts((int) $r['id']);
-            $txAmounts[] = $opening;
-            $balance = Money::sum($txAmounts);
+            $id = (int) $r['id'];
+            // Saldo final: todas as transações ativas (inclui futuros).
+            $balanceFinal = Money::sum([$opening, ...$this->fetchActiveTxAmounts($id, null)]);
+            // Saldo até hoje: opening + lançamentos com date <= hoje (inclui o dia corrente).
+            $balanceToday = Money::sum([$opening, ...$this->fetchActiveTxAmounts($id, $todayIso)]);
             $minimum = $r['minimum_balance'] !== null ? Money::fromStorage($r['minimum_balance']) : null;
             $out[] = [
-                'id' => (int) $r['id'],
+                'id' => $id,
                 'name' => $r['name'],
                 'type' => $r['type'],
                 'institution_id' => $r['institution_id'] !== null ? (int) $r['institution_id'] : null,
@@ -62,8 +66,13 @@ final class AccountService
                 'currency' => $r['currency'],
                 'opening_balance_cents' => $opening->toCents(),
                 'opening_balance_formatted' => $opening->format(true),
-                'balance_cents' => $balance->toCents(),
-                'balance_formatted' => $balance->format(true),
+                // Compat: balance_* = saldo final (com futuros).
+                'balance_cents' => $balanceFinal->toCents(),
+                'balance_formatted' => $balanceFinal->format(true),
+                'balance_final_cents' => $balanceFinal->toCents(),
+                'balance_final_formatted' => $balanceFinal->format(true),
+                'balance_today_cents' => $balanceToday->toCents(),
+                'balance_today_formatted' => $balanceToday->format(true),
                 'opening_date' => Dates::formatDate(Dates::fromIso($r['opening_date'])),
                 'minimum_balance_cents' => $minimum?->toCents(),
                 'minimum_balance_formatted' => $minimum?->format(true),
@@ -77,13 +86,25 @@ final class AccountService
         return $out;
     }
 
-    /** @return list<Money> */
-    private function fetchActiveTxAmounts(int $accountId): array
+    /**
+     * Valores de transações ativas da conta.
+     * @param ?string $untilIso Se informado (YYYY-MM-DD), só date <= untilIso.
+     * @return list<Money>
+     */
+    private function fetchActiveTxAmounts(int $accountId, ?string $untilIso = null): array
     {
-        $stmt = $this->pdo->prepare(
-            'SELECT amount FROM "transaction" WHERE account_id = ? AND deleted_at IS NULL',
-        );
-        $stmt->execute([$accountId]);
+        if ($untilIso !== null) {
+            $stmt = $this->pdo->prepare(
+                'SELECT amount FROM "transaction"
+                 WHERE account_id = ? AND deleted_at IS NULL AND date <= ?',
+            );
+            $stmt->execute([$accountId, $untilIso]);
+        } else {
+            $stmt = $this->pdo->prepare(
+                'SELECT amount FROM "transaction" WHERE account_id = ? AND deleted_at IS NULL',
+            );
+            $stmt->execute([$accountId]);
+        }
         $out = [];
         foreach ($stmt->fetchAll() as $r) {
             $out[] = Money::fromStorage($r['amount']);
@@ -105,7 +126,9 @@ final class AccountService
             throw new \RuntimeException("Conta #{$id} não encontrada.");
         }
         $opening = Money::fromStorage($r['opening_balance']);
-        $balance = Money::sum([$opening, ...$this->fetchActiveTxAmounts($id)]);
+        $todayIso = Dates::toIso(Dates::nowUtc()->setTime(0, 0, 0));
+        $balanceFinal = Money::sum([$opening, ...$this->fetchActiveTxAmounts($id, null)]);
+        $balanceToday = Money::sum([$opening, ...$this->fetchActiveTxAmounts($id, $todayIso)]);
         return [
             'id' => (int) $r['id'],
             'name' => $r['name'],
@@ -113,7 +136,9 @@ final class AccountService
             'institution_id' => $r['institution_id'] !== null ? (int) $r['institution_id'] : null,
             'institution_name' => $r['institution_name'],
             'opening_balance_cents' => $opening->toCents(),
-            'balance_cents' => $balance->toCents(),
+            'balance_cents' => $balanceFinal->toCents(),
+            'balance_final_cents' => $balanceFinal->toCents(),
+            'balance_today_cents' => $balanceToday->toCents(),
             'opening_date' => Dates::formatDate(Dates::fromIso($r['opening_date'])),
             'is_favorite' => ((int) $r['is_favorite']) === 1,
             'is_closed' => ((int) $r['is_closed']) === 1,

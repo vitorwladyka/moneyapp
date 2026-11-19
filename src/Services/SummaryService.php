@@ -29,9 +29,12 @@ final class SummaryService
         $assetTypes = ['bank', 'cash', 'investment', 'asset'];
         $liabilityTypes = ['credit_card', 'loan', 'liability'];
 
-        // Contas não fechadas, com transações ativas.
+        $now = Dates::nowUtc();
+        $todayIso = Dates::toIso($now->setTime(0, 0, 0));
+
+        // Contas não fechadas + transações ativas (com data para cortar "até hoje").
         $sql = <<<'SQL'
-            SELECT a.id, a.type, a.opening_balance, t.amount
+            SELECT a.id, a.type, a.opening_balance, t.amount, t.date AS tx_date
             FROM account a
             LEFT JOIN "transaction" t ON t.account_id = a.id AND t.deleted_at IS NULL
             WHERE a.is_closed = 0
@@ -45,34 +48,58 @@ final class SummaryService
                 $byAccount[$id] = [
                     'type' => $r['type'],
                     'opening' => $r['opening_balance'],
-                    'amounts' => [],
+                    'amounts_all' => [],
+                    'amounts_today' => [],
                 ];
             }
             if ($r['amount'] !== null) {
-                $byAccount[$id]['amounts'][] = $r['amount'];
+                $byAccount[$id]['amounts_all'][] = $r['amount'];
+                // date <= hoje (inclusive)
+                if (($r['tx_date'] ?? '') !== '' && $r['tx_date'] <= $todayIso) {
+                    $byAccount[$id]['amounts_today'][] = $r['amount'];
+                }
             }
         }
 
-        $assets = [];
-        $liabs = [];
+        $assetsFinal = [];
+        $liabsFinal = [];
+        $assetsToday = [];
+        $liabsToday = [];
         foreach ($byAccount as $acc) {
-            $items = [Money::fromStorage($acc['opening'])];
-            foreach ($acc['amounts'] as $amt) {
-                $items[] = Money::fromStorage($amt);
+            $itemsFinal = [Money::fromStorage($acc['opening'])];
+            foreach ($acc['amounts_all'] as $amt) {
+                $itemsFinal[] = Money::fromStorage($amt);
             }
-            $balance = Money::sum($items);
+            $balanceFinal = Money::sum($itemsFinal);
+
+            $itemsToday = [Money::fromStorage($acc['opening'])];
+            foreach ($acc['amounts_today'] as $amt) {
+                $itemsToday[] = Money::fromStorage($amt);
+            }
+            $balanceToday = Money::sum($itemsToday);
+
             if (\in_array($acc['type'], $assetTypes, true)) {
-                $assets[] = $balance;
+                $assetsFinal[] = $balanceFinal;
+                $assetsToday[] = $balanceToday;
             } else {
-                $liabs[] = $balance;
+                $liabsFinal[] = $balanceFinal;
+                $liabsToday[] = $balanceToday;
             }
         }
-        $totalAssets = Money::sum($assets);
-        $totalLiab = Money::sum($liabs);
-        $netWorth = Money::sum([$totalAssets, $totalLiab]);
+        $totalAssetsFinal = Money::sum($assetsFinal);
+        $totalLiabFinal = Money::sum($liabsFinal);
+        $netWorthFinal = Money::sum([$totalAssetsFinal, $totalLiabFinal]);
+
+        $totalAssetsToday = Money::sum($assetsToday);
+        $totalLiabToday = Money::sum($liabsToday);
+        $netWorthToday = Money::sum([$totalAssetsToday, $totalLiabToday]);
+
+        // Compat: campos sem sufixo = final (com futuros), como antes.
+        $totalAssets = $totalAssetsFinal;
+        $totalLiab = $totalLiabFinal;
+        $netWorth = $netWorthFinal;
 
         // Mês atual.
-        $now = Dates::nowUtc();
         $yyyy = (int) $now->format('Y');
         $mm = (int) $now->format('n');
         $monthStartIso = \sprintf('%04d-%02d-01', $yyyy, $mm);
@@ -115,6 +142,20 @@ final class SummaryService
             'total_liabilities_formatted' => $totalLiab->format(true),
             'net_worth_cents' => $netWorth->toCents(),
             'net_worth_formatted' => $netWorth->format(true),
+            // Até hoje (date <= hoje)
+            'total_assets_today_cents' => $totalAssetsToday->toCents(),
+            'total_assets_today_formatted' => $totalAssetsToday->format(true),
+            'total_liabilities_today_cents' => $totalLiabToday->toCents(),
+            'total_liabilities_today_formatted' => $totalLiabToday->format(true),
+            'net_worth_today_cents' => $netWorthToday->toCents(),
+            'net_worth_today_formatted' => $netWorthToday->format(true),
+            // Final com futuros
+            'total_assets_final_cents' => $totalAssetsFinal->toCents(),
+            'total_assets_final_formatted' => $totalAssetsFinal->format(true),
+            'total_liabilities_final_cents' => $totalLiabFinal->toCents(),
+            'total_liabilities_final_formatted' => $totalLiabFinal->format(true),
+            'net_worth_final_cents' => $netWorthFinal->toCents(),
+            'net_worth_final_formatted' => $netWorthFinal->format(true),
             'month_income_cents' => $monthIncome->toCents(),
             'month_income_formatted' => $monthIncome->format(true),
             'month_expense_cents' => $monthExpense->toCents(),

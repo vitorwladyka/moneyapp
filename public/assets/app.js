@@ -73,7 +73,17 @@ async function DashboardView(root, actions) {
 
     // --- Stats grid ---
     try {
-        const netAccent = (summary.net_worth_cents ?? 0) >= 0 ? 'income' : 'expense';
+        const netTodayCents = summary.net_worth_today_cents ?? summary.net_worth_cents ?? 0;
+        const netFinalCents = summary.net_worth_final_cents ?? summary.net_worth_cents ?? 0;
+        const netTodayFmt = summary.net_worth_today_formatted || summary.net_worth_formatted || '—';
+        const netFinalFmt = summary.net_worth_final_formatted || summary.net_worth_formatted || '—';
+        const assetsToday = summary.total_assets_today_formatted || summary.total_assets_formatted || '—';
+        const liabToday = summary.total_liabilities_today_formatted || summary.total_liabilities_formatted || '—';
+        const assetsFinal = summary.total_assets_final_formatted || summary.total_assets_formatted || '—';
+        const liabFinal = summary.total_liabilities_final_formatted || summary.total_liabilities_formatted || '—';
+
+        const netTodayAccent = netTodayCents >= 0 ? 'income' : 'expense';
+        const netFinalAccent = netFinalCents >= 0 ? 'income' : 'expense';
         const balAccent = balanceCents >= 0 ? 'income' : 'expense';
         const savingsSub = savingsRate != null
             ? `${savingsRate}% da receita · ${balanceCents >= 0 ? 'superávit' : 'déficit'}`
@@ -81,10 +91,16 @@ async function DashboardView(root, actions) {
 
         const stats = el('div', { className: 'stats-grid' }, [
             statCard(
-                'Patrimônio líquido',
-                summary.net_worth_formatted || '—',
-                netAccent,
-                `Ativos ${summary.total_assets_formatted || '—'} · Passivos ${summary.total_liabilities_formatted || '—'}`,
+                'Patrimônio · até hoje',
+                netTodayFmt,
+                netTodayAccent,
+                `Ativos ${assetsToday} · Passivos ${liabToday}`,
+            ),
+            statCard(
+                'Patrimônio · final',
+                netFinalFmt,
+                netFinalAccent,
+                `Com futuros · Ativos ${assetsFinal} · Passivos ${liabFinal}`,
             ),
             statCard(
                 `Receitas · ${monthWord}`,
@@ -271,14 +287,14 @@ async function DashboardView(root, actions) {
     // Contas (snapshot)
     try {
         const accList = Array.isArray(accounts) ? accounts.filter(a => !a.is_closed) : [];
-        accList.sort((a, b) => (b.balance_cents || 0) - (a.balance_cents || 0));
+        accList.sort((a, b) => (b.balance_today_cents ?? b.balance_cents ?? 0) - (a.balance_today_cents ?? a.balance_cents ?? 0));
         const top = accList.slice(0, 6);
 
         const accCard = el('div', { className: 'card' });
         accCard.appendChild(el('div', { className: 'card-header' }, [
             el('div', {}, [
                 el('h3', { className: 'card-title', text: 'Contas' }),
-                el('p', { className: 'card-subtitle', text: `${accList.length} aberta${accList.length === 1 ? '' : 's'}` }),
+                el('p', { className: 'card-subtitle', text: `${accList.length} aberta${accList.length === 1 ? '' : 's'} · até hoje / final` }),
             ]),
             el('a', { className: 'btn btn-sm', attrs: { href: '/accounts.php' }, text: 'Gerenciar →' }),
         ]));
@@ -288,7 +304,12 @@ async function DashboardView(root, actions) {
         } else {
             const list = el('div', { className: 'dash-accounts' });
             for (const a of top) {
-                const neg = (a.balance_cents || 0) < 0;
+                const todayCents = a.balance_today_cents ?? a.balance_cents ?? 0;
+                const finalCents = a.balance_final_cents ?? a.balance_cents ?? 0;
+                const todayFmt = a.balance_today_formatted ?? a.balance_formatted ?? '—';
+                const finalFmt = a.balance_final_formatted ?? a.balance_formatted ?? '—';
+                const negToday = todayCents < 0;
+                const negFinal = finalCents < 0;
                 list.appendChild(el('div', { className: 'dash-account-row' }, [
                     el('div', { className: 'dash-account-main' }, [
                         el('span', { className: `account-icon ${a.type || 'bank'}`, text: typeEmoji(a.type) }),
@@ -297,10 +318,18 @@ async function DashboardView(root, actions) {
                             el('div', { className: 'dash-account-meta', text: typeLabel(a.type) + (a.institution_name ? ` · ${a.institution_name}` : '') }),
                         ]),
                     ]),
-                    el('div', {
-                        className: `amount ${neg ? 'expense' : 'income'}`,
-                        text: a.balance_formatted || '—',
-                    }),
+                    el('div', { className: 'dash-account-balances' }, [
+                        el('div', {
+                            className: `amount ${negToday ? 'expense' : 'income'}`,
+                            attrs: { title: 'Até hoje' },
+                            text: todayFmt,
+                        }),
+                        el('div', {
+                            className: `amount amount-final ${negFinal ? 'expense' : 'income'}`,
+                            attrs: { title: 'Saldo final (com futuros)' },
+                            text: finalFmt,
+                        }),
+                    ]),
                 ]));
             }
             if (accList.length > top.length) {
@@ -1100,10 +1129,18 @@ async function AccountsView(root, actions) {
 
     function render() {
         root.innerHTML = '';
-        const totalAssets = accounts.filter(a => ['bank','cash','investment','asset'].includes(a.type) && !a.is_closed).reduce((s, a) => s + a.balance_cents, 0);
-        const totalLiab = accounts.filter(a => ['credit_card','loan','liability'].includes(a.type) && !a.is_closed).reduce((s, a) => s + a.balance_cents, 0);
-        const net = totalAssets + totalLiab;
-        root.appendChild(el('p', { className: 'page-subtitle', text: `Patrimônio líquido: ${formatCents(net)} · ${accounts.length} conta(s)` }));
+        const openAccounts = accounts.filter(a => !a.is_closed);
+        const sumBy = (types, field) => openAccounts
+            .filter(a => types.includes(a.type))
+            .reduce((s, a) => s + (a[field] ?? a.balance_cents ?? 0), 0);
+        const assetTypes = ['bank', 'cash', 'investment', 'asset'];
+        const liabTypes = ['credit_card', 'loan', 'liability'];
+        const netToday = sumBy(assetTypes, 'balance_today_cents') + sumBy(liabTypes, 'balance_today_cents');
+        const netFinal = sumBy(assetTypes, 'balance_final_cents') + sumBy(liabTypes, 'balance_final_cents');
+        root.appendChild(el('p', {
+            className: 'page-subtitle',
+            text: `Até hoje: ${formatCents(netToday)} · Final (c/ futuros): ${formatCents(netFinal)} · ${accounts.length} conta(s)`,
+        }));
 
         if (accounts.length === 0) {
             root.appendChild(el('div', { className: 'card' }, [
@@ -1123,13 +1160,29 @@ async function AccountsView(root, actions) {
                     el('div', { className: 'account-type', text: `${typeLabel(a.type)}${a.institution_name ? ' · ' + a.institution_name : ''}` }),
                 ]),
             ]);
-            const balanceBlock = el('div', {}, [
-                el('div', { className: 'balance-label', text: 'Saldo atual' }),
-                el('div', { className: `balance-value ${a.balance_cents < 0 ? 'negative' : ''}`, text: a.balance_formatted }),
+            const todayCents = a.balance_today_cents ?? a.balance_cents;
+            const finalCents = a.balance_final_cents ?? a.balance_cents;
+            const todayFmt = a.balance_today_formatted ?? a.balance_formatted;
+            const finalFmt = a.balance_final_formatted ?? a.balance_formatted;
+            const balanceBlock = el('div', { className: 'account-balances' }, [
+                el('div', { className: 'account-balance-row' }, [
+                    el('div', { className: 'balance-label', text: 'Até hoje' }),
+                    el('div', {
+                        className: `balance-value ${todayCents < 0 ? 'negative' : ''}`,
+                        text: todayFmt,
+                    }),
+                ]),
+                el('div', { className: 'account-balance-row' }, [
+                    el('div', { className: 'balance-label', text: 'Saldo final' }),
+                    el('div', {
+                        className: `balance-value balance-value-secondary ${finalCents < 0 ? 'negative' : ''}`,
+                        text: finalFmt,
+                    }),
+                ]),
                 el('div', {
                     className: 'account-type',
                     text: `Abertura: ${a.opening_date} · ${a.opening_balance_formatted || '—'}`,
-                    attrs: { style: 'margin-top:4px' },
+                    attrs: { style: 'margin-top:6px' },
                 }),
                 a.comment
                     ? el('div', {
